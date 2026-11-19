@@ -1,0 +1,44 @@
+const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
+const fs = require('fs');
+const auth = JSON.parse(fs.readFileSync(process.env.PORTAL_QC_AUTH_FILE, 'utf8'));
+const output = 'reference/qc/2026-11-18';
+const base = process.env.PORTAL_QC_BASE_URL || 'http://127.0.0.1:8000';
+const result = {checks:[], errors:[], failedRequests:[]};
+const check = (name, pass) => {result.checks.push({name,pass}); if(!pass) throw new Error(name);};
+(async () => {
+ const browser = await chromium.launch({headless:true,chromiumSandbox:false,executablePath:process.env.PLAYWRIGHT_CHROMIUM_PATH});
+ const page = await browser.newPage({viewport:{width:1440,height:1000}});
+ page.on('pageerror', error=>result.errors.push(error.message));
+ page.on('response', response=>{if(response.status()>=400)result.failedRequests.push({url:response.url(),status:response.status()});});
+ const go = path=>page.goto(base+path);
+ const save = async()=>{await page.getByRole('button',{name:'Simpan Perubahan',exact:true}).click();await page.waitForURL('**/edit');await page.locator('.alert.success').waitFor();};
+ try {
+  await go('/admin/login');await page.locator('#email').fill(auth.email);await page.locator('#password').fill(auth.password);await page.getByRole('button',{name:'Masuk ke Panel',exact:true}).click();await page.waitForURL('**/admin');
+  await go('/admin/content/pages/create');await page.locator('[data-editor-ready="true"]').waitFor();
+  await page.locator('[name="title"]').fill('QC Navigation Guide');await page.locator('[name="slug"]').fill('qc-navigation-guide');await page.locator('.ql-editor').fill('Pilih layanan kampus di bawah ini.');await page.locator('[name="status"]').selectOption('published');
+  const selectedService = await page.locator('[name="service_ids[]"]').first().getAttribute('value');
+  const serviceName = (await page.locator('[name="service_ids[]"]').first().locator('..').innerText()).trim();
+  await page.locator('[name="service_ids[]"]').first().check();await save();
+  check('Selected service remains checked after saving page',await page.locator(`[name="service_ids[]"][value="${selectedService}"]`).isChecked());
+  await page.screenshot({path:output+'/navigation-page-editor.png',fullPage:true});
+  await go('/admin/content/menus/create');await page.locator('[name="label"]').fill('QC Navigation Group');await page.locator('[data-menu-target]').selectOption('group');await save();
+  check('Dropdown group saved without manual URL',await page.locator('[data-menu-target]').inputValue()==='group');
+  const groupId = page.url().match(/\/(\d+)\/edit$/)[1];
+  await go('/admin/content/menus/create');await page.locator('[name="label"]').fill('QC Navigation Page Link');await page.locator('[name="parent_id"]').selectOption(groupId);await page.locator('[data-menu-target]').selectOption('page');await page.locator('[data-menu-for="page"] select').selectOption({label:'QC Navigation Guide'});await save();
+  check('Page destination saved without copying URL',await page.locator('[data-menu-target]').inputValue()==='page');
+  await go('/admin/content/menus/create');await page.locator('[name="label"]').fill('QC Navigation Service Link');await page.locator('[name="parent_id"]').selectOption(groupId);await page.locator('[data-menu-target]').selectOption('service');await page.locator('[data-menu-for="service"] select').selectOption(selectedService);await save();
+  check('Service destination saved without copying URL',await page.locator('[data-menu-target]').inputValue()==='service');
+  await go('/admin/content/menus');check('Navigation table handles dropdown groups',await page.getByText('QC Navigation Group',{exact:true}).count()===1);await page.screenshot({path:output+'/navigation-admin-table.png',fullPage:true});
+  await go('/');const dropdown=page.locator('.nav-dropdown').filter({has:page.locator('summary').filter({hasText:'QC Navigation Group'})});await dropdown.locator('summary').click();
+  check('Database dropdown renders page and service destinations',await dropdown.getByRole('link').count()===2);
+  await dropdown.getByRole('link',{name:'QC Navigation Page Link',exact:true}).click();await page.waitForURL('**/halaman/qc-navigation-guide');
+  check('Page link opens the selected page',await page.locator('h1').innerText()==='QC Navigation Guide');
+  check('Current dropdown has active line',await page.locator('.nav-dropdown summary.active').innerText().then(text=>text.includes('QC Navigation Group')));
+  check('Related service rendered as a working link',await page.locator('article').getByRole('link',{name:serviceName,exact:true}).count()===1);
+  await page.screenshot({path:output+'/navigation-public-page.png',fullPage:true});
+  await page.locator('article').getByRole('link',{name:serviceName,exact:true}).click();await page.waitForURL('**/layanan/*');check('Page service link opens service details',await page.locator('h1').innerText().then(text=>text.includes(serviceName)));
+  await page.setViewportSize({width:390,height:844});await go('/halaman/qc-navigation-guide');await page.getByRole('button',{name:'Buka menu navigasi',exact:true}).click();await page.locator('#main-nav summary').filter({hasText:'QC Navigation Group'}).click();check('Mobile dropdown opens',await page.getByRole('link',{name:'QC Navigation Service Link',exact:true}).isVisible());check('Mobile page has no horizontal overflow',await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));await page.screenshot({path:output+'/navigation-mobile.png',fullPage:true});
+  await go(`/admin/content/menus/${groupId}/edit`);await page.locator('[name="is_visible"]').uncheck();await save();await go('/');check('Hidden group also hides children',await page.locator('#main-nav').innerText().then(text=>!text.includes('QC Navigation')));
+ } catch(error) {result.errors.push(error.message);await page.screenshot({path:output+'/navigation-failure.png',fullPage:true});}
+ fs.writeFileSync(output+'/navigation-results.json',JSON.stringify(result,null,2));console.log(JSON.stringify(result,null,2));await browser.close();if(result.errors.length||result.failedRequests.length)process.exitCode=1;
+})().catch(error=>{console.error(error);process.exit(1);});

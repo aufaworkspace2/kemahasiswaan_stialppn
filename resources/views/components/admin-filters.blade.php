@@ -1,0 +1,2 @@
+@props(['placeholder'=>'Cari data...','resetUrl'=>url()->current()])
+<form method="GET" class="admin-list-filters"><div class="search-control"><label for="list-search" class="sr-only">Pencarian</label><input id="list-search" name="q" value="{{ request('q') }}" placeholder="{{ $placeholder }}" maxlength="150"></div>{{ $slot }}<div class="filter-actions"><button class="btn btn-primary" type="submit"><x-icon name="search" class="h-4 w-4"/>Cari</button>@if(count(request()->except('page')))<a class="btn btn-outline" href="{{ $resetUrl }}">Reset</a>@endif</div></form>

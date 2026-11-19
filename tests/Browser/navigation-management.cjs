@@ -1,0 +1,44 @@
+const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
+const fs=require('fs');
+const auth=JSON.parse(fs.readFileSync(process.env.PORTAL_QC_AUTH_FILE,'utf8'));
+const fixtures=JSON.parse(fs.readFileSync('/tmp/navigation-drag-fixtures.json','utf8'));
+const output='reference/qc/2026-11-18';
+const base=process.env.PORTAL_QC_BASE_URL||'http://127.0.0.1:8000';
+const result={checks:[],errors:[],failedRequests:[]};
+const check=(name,pass)=>{result.checks.push({name,pass});if(!pass)throw Error(name);};
+(async()=>{
+const browser=await chromium.launch({headless:true,chromiumSandbox:false,executablePath:process.env.PLAYWRIGHT_CHROMIUM_PATH});
+const page=await browser.newPage({viewport:{width:1440,height:1100}});
+page.on('pageerror',error=>result.errors.push(error.message));page.on('response',response=>{if(response.status()>=400)result.failedRequests.push({url:response.url(),status:response.status()});});
+const row=id=>page.locator(`[data-menu-item="${id}"]`);
+const editorReady=()=>page.locator('[data-navigation-ready="true"]').waitFor();
+const save=async()=>{await page.getByRole('button',{name:'Simpan Susunan',exact:true}).click();await page.waitForEvent('load');await editorReady();};
+try{
+ await page.goto(base+'/admin/login');await page.locator('#email').fill(auth.email);await page.locator('#password').fill(auth.password);await page.getByRole('button',{name:'Masuk ke Panel',exact:true}).click();await page.waitForURL('**/admin');
+ await page.goto(base+'/admin/content/menus');await editorReady();
+ check('Compact semantic table is rendered',await page.locator('table.navigation-table thead th').count()===7);
+ check('Desktop rows stay compact',await row(fixtures.c).boundingBox().then(box=>box.height<90));
+ check('Main menu and submenu labels show hierarchy',await row(fixtures.c).locator('[data-menu-level]').innerText()==='Submenu dari QC Drag Group A');
+ check('Parent delete button is disabled with explanation',await row(fixtures.a).locator('[data-menu-delete] button').isDisabled()&&Boolean(await row(fixtures.a).getAttribute('data-delete-block')));
+ check('Unused leaf delete button is enabled',await row(fixtures.d).locator('[data-menu-delete] button').isEnabled());
+ check('Empty dropdown group cannot be nested',await row(fixtures.b).locator('[data-menu-parent]').isDisabled());
+ const handle=row(fixtures.c).locator('[data-menu-handle]');await handle.scrollIntoViewIfNeeded();const start=await handle.boundingBox();
+ await page.mouse.move(start.x+start.width/2,start.y+start.height/2);await page.mouse.down();
+ const target=row(fixtures.b).locator('[data-menu-level]');await target.scrollIntoViewIfNeeded();const end=await target.boundingBox();await page.mouse.move(end.x+end.width/2,end.y+end.height/2,{steps:16});await page.mouse.up();
+ check('Pointer drag promotes child to a main row',await row(fixtures.c).getAttribute('data-parent')==='');
+ await row(fixtures.c).locator('[data-menu-parent]').selectOption(String(fixtures.b));
+ check('Changed hierarchy announces new parent',await row(fixtures.c).locator('[data-menu-level]').innerText()==='Submenu dari QC Drag Group B');
+ check('Dirty tree enables save and disables deletion',await page.locator('[data-navigation-save]').isEnabled()&&await row(fixtures.d).locator('[data-menu-delete] button').isDisabled());
+ await save();check('Drag parent persists after reload',await row(fixtures.c).getAttribute('data-parent')===String(fixtures.b));
+ check('New parent deletion is blocked after saving',await row(fixtures.b).locator('[data-menu-delete] button').isDisabled());
+ await page.screenshot({path:output+'/navigation-table-desktop.png',fullPage:true});
+ await row(fixtures.c).locator('[data-menu-parent]').selectOption('');await save();check('Parent selector promotes submenu to main menu',await row(fixtures.c).getAttribute('data-parent')==='');
+ await row(fixtures.c).locator('[data-menu-move="up"]').click();await save();const rootOrder=await page.locator('.navigation-tree > [data-menu-item][data-parent=""]').evaluateAll(items=>items.map(item=>item.dataset.menuItem));check('Up button changes persisted sibling order',rootOrder.indexOf(String(fixtures.c))<rootOrder.indexOf(String(fixtures.d)));
+ await page.locator('[data-navigation-search]').fill('QC Drag Leaf');check('Search keeps matching menu visible',await row(fixtures.d).isVisible()&&!await row(fixtures.a).isVisible());check('Filtered view prevents partial reordering',await row(fixtures.d).locator('[data-menu-handle]').isDisabled());await page.locator('[data-navigation-search]').fill('');
+ await page.setViewportSize({width:390,height:844});await row(fixtures.c).locator('[data-menu-parent]').selectOption(String(fixtures.a));await save();check('Mobile selector moves item into submenu',await row(fixtures.c).locator('[data-menu-level]').innerText()==='Submenu dari QC Drag Group A');check('Mobile hierarchy does not overflow',await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));await page.screenshot({path:output+'/navigation-table-mobile.png',fullPage:true});
+ page.once('dialog',dialog=>dialog.dismiss());await row(fixtures.d).locator('[data-menu-delete] button').click();check('Cancelling delete keeps menu',await row(fixtures.d).count()===1);
+ page.once('dialog',dialog=>dialog.accept());await row(fixtures.d).locator('[data-menu-delete] button').click();await page.waitForEvent('load');await editorReady();check('Confirmed leaf deletion removes only selected menu',await row(fixtures.d).count()===0&&await row(fixtures.c).count()===1);
+ await page.goto(base+'/');check('Public page does not load navigation editor chunk',await page.evaluate(()=>performance.getEntriesByType('resource').every(entry=>!entry.name.includes('admin-navigation'))));
+}catch(error){result.errors.push(error.message);await page.screenshot({path:output+'/navigation-table-failure.png',fullPage:true});}
+fs.writeFileSync(output+'/navigation-table-results.json',JSON.stringify(result,null,2));console.log(JSON.stringify(result,null,2));await browser.close();if(result.errors.length||result.failedRequests.length)process.exitCode=1;
+})().catch(error=>{console.error(error);process.exit(1);});

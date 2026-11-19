@@ -1,0 +1,2 @@
+@php($desktop=$section->media??$section->mobileMedia)
+@if($desktop)<picture class="section-picture">@if($section->mobileMedia)<source media="(max-width: 640px)" srcset="{{ asset('storage/'.$section->mobileMedia->path) }}">@endif<img src="{{ asset('storage/'.$desktop->path) }}" alt="{{ $section->title }}" width="1200" height="800" loading="{{ !empty($eagerImage)?'eager':'lazy' }}" decoding="async" @if(!empty($eagerImage)) fetchpriority="high" @endif></picture>@endif

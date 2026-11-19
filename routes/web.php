@@ -1,0 +1,64 @@
+<?php
+
+use App\Http\Controllers\AdminContentController;
+use App\Http\Controllers\AdminController;
+use App\Http\Controllers\AdminNavigationController;
+use App\Http\Controllers\ApplicationController;
+use App\Http\Controllers\PortalController;
+use Illuminate\Support\Facades\Route;
+
+Route::get('/', [PortalController::class, 'home'])->name('home');
+Route::get('/layanan/{service:slug}', [PortalController::class, 'service'])->name('services.show');
+Route::get('/layanan/{service:slug}/{form:slug}', [PortalController::class, 'form'])->name('forms.show');
+Route::post('/layanan/{service:slug}/{form:slug}', [ApplicationController::class, 'store'])->middleware('throttle:portal-submissions')->name('applications.store');
+Route::get('/berita', [PortalController::class, 'posts'])->name('posts.index');
+Route::get('/berita/{post:slug}', [PortalController::class, 'post'])->name('posts.show');
+Route::get('/halaman/{page:slug}', [PortalController::class, 'page'])->name('pages.show');
+Route::middleware('private.response')->group(function (): void {
+    Route::get('/akses/{token}', [ApplicationController::class, 'access'])->middleware('throttle:portal-access')->name('applications.access');
+    Route::get('/akses/{token}/bukti', [ApplicationController::class, 'receipt'])->name('applications.receipt');
+    Route::post('/akses/{token}/perbaikan', [ApplicationController::class, 'revise'])->middleware('throttle:portal-submissions')->name('applications.revise');
+    Route::get('/akses/{token}/surat/{letter}', [ApplicationController::class, 'letter'])->name('applications.letter');
+});
+Route::get('/admin/login', [AdminController::class, 'login'])->name('login');
+Route::post('/admin/login', [AdminController::class, 'authenticate'])->middleware('throttle:portal-login')->name('login.store');
+Route::prefix('admin')->name('admin.')->middleware(['auth', 'private.response'])->group(function (): void {
+    Route::get('/', [AdminController::class, 'dashboard'])->name('dashboard');
+    Route::post('/logout', [AdminController::class, 'logout'])->name('logout');
+    Route::get('/applications', [AdminController::class, 'applications'])->name('applications.index');
+    Route::get('/applications/{application}', [AdminController::class, 'application'])->name('applications.show');
+    Route::post('/applications/{application}/status', [AdminController::class, 'updateApplication'])->name('applications.status');
+    Route::post('/applications/{application}/notes', [AdminController::class, 'note'])->name('applications.notes');
+    Route::post('/applications/{application}/access-link', [AdminController::class, 'resendLink'])->name('applications.link');
+    Route::get('/attachments/{attachment}', [AdminController::class, 'attachment'])->name('attachments.download');
+    Route::post('/deliveries/{delivery}', [AdminController::class, 'delivery'])->name('deliveries.update');
+    Route::get('/forms', [AdminController::class, 'forms'])->name('forms.index');
+    Route::post('/forms', [AdminController::class, 'createForm'])->name('forms.store');
+    Route::get('/forms/create', [AdminController::class, 'newForm'])->name('forms.create');
+    Route::get('/forms/{form}', [AdminController::class, 'editForm'])->name('forms.edit');
+    Route::post('/forms/{form}', [AdminController::class, 'saveForm'])->name('forms.update');
+    Route::get('/forms/{form}/preview', [AdminController::class, 'previewForm'])->name('forms.preview');
+    Route::post('/navigation/order', [AdminNavigationController::class, 'update'])->name('navigation.order');
+    Route::delete('/navigation/{menu}', [AdminNavigationController::class, 'destroy'])->name('navigation.destroy');
+    Route::get('/content/{type}/create', [AdminContentController::class, 'create'])->name('content.create');
+    Route::get('/content/{type}/{id}/edit', [AdminContentController::class, 'edit'])->whereNumber('id')->name('content.edit');
+    Route::get('/content/{type?}', [AdminContentController::class, 'index'])->name('content.index');
+    Route::post('/content/{type}', [AdminController::class, 'saveContent'])->name('content.store');
+    Route::post('/sections/{section}/move', [AdminController::class, 'moveSection'])->name('sections.move');
+    Route::get('/masters/{type}/create', [AdminController::class, 'newMaster'])->name('masters.create');
+    Route::get('/masters/{type}/{id}/edit', [AdminController::class, 'editMaster'])->whereNumber('id')->name('masters.edit');
+    Route::get('/masters/{type?}', [AdminController::class, 'masters'])->name('masters.index');
+    Route::post('/masters/{type}', [AdminController::class, 'saveMaster'])->name('masters.store');
+    Route::get('/accounts', [AdminController::class, 'accounts'])->name('accounts.index');
+    Route::get('/accounts/create', [AdminController::class, 'newAccount'])->name('accounts.create');
+    Route::get('/accounts/{user}/edit', [AdminController::class, 'editAccount'])->name('accounts.edit');
+    Route::post('/accounts', [AdminController::class, 'saveAccount'])->name('accounts.store');
+    Route::get('/templates', [AdminController::class, 'templates'])->name('templates.index');
+    Route::get('/templates/create', [AdminController::class, 'newTemplate'])->name('templates.create');
+    Route::post('/templates', [AdminController::class, 'storeTemplate'])->name('templates.store');
+    Route::get('/templates/{template}/edit', [AdminController::class, 'editTemplate'])->name('templates.edit');
+    Route::post('/templates/{template}', [AdminController::class, 'saveTemplate'])->name('templates.update');
+    Route::get('/applications/{application}/letter-preview', [AdminController::class, 'previewLetter'])->name('letters.preview');
+    Route::post('/applications/{application}/letters', [AdminController::class, 'issueLetter'])->name('letters.issue');
+    Route::get('/letters/{letter}', [AdminController::class, 'letter'])->name('letters.download');
+});

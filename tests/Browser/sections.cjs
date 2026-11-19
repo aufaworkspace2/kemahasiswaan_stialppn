@@ -1,0 +1,44 @@
+const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
+const fs=require('fs');
+const auth=JSON.parse(fs.readFileSync(process.env.PORTAL_QC_AUTH_FILE,'utf8'));
+const fixtures=JSON.parse(fs.readFileSync('/tmp/section-qc-fixtures.json','utf8'));
+const output='reference/qc/2026-11-19';
+const base=process.env.PORTAL_QC_BASE_URL||'http://127.0.0.1:8000';
+const result={checks:[],errors:[],failedRequests:[]};
+const check=(name,pass)=>{result.checks.push({name,pass});if(!pass)throw Error(name);};
+(async()=>{
+ const browser=await chromium.launch({headless:true,chromiumSandbox:false,executablePath:process.env.PLAYWRIGHT_CHROMIUM_PATH});
+ const page=await browser.newPage({viewport:{width:1440,height:1000}});
+ page.on('pageerror',error=>result.errors.push(error.message));page.on('response',response=>{if(response.status()>=400)result.failedRequests.push({url:response.url(),status:response.status()});});
+ const go=path=>page.goto(base+path);
+ const ready=async()=>{await page.locator('[data-section-ready="true"]').waitFor();await page.locator('[data-rich-text][data-editor-ready="true"]').first().waitFor();};
+ let editPath;
+ const save=async()=>{await page.getByRole('button',{name:'Simpan Perubahan',exact:true}).click();await page.waitForURL('**/sections/*/edit');await page.locator('.alert.success').waitFor();await ready();editPath=new URL(page.url()).pathname;};
+ try {
+  await go('/admin/login');await page.locator('#email').fill(auth.email);await page.locator('#password').fill(auth.password);await page.getByRole('button',{name:'Masuk ke Panel',exact:true}).click();await page.waitForURL('**/admin');
+  await go('/admin/content/sections');check('Section list stays a compact table',await page.locator('table').count()===1);await page.getByRole('link',{name:'Tambah',exact:true}).click();await ready();
+  check('Section types can be selected',await page.locator('[name="section_type"] option').count()===13);
+  await page.locator('[name="name"]').fill('QC Custom Section');await page.locator('[name="title"]').fill('QC Section Public Heading');await page.locator('[name="section_type"]').selectOption('image');await page.locator('[name="anchor"]').fill('qc-custom-section');
+  await page.locator('[data-rich-text]').nth(0).locator('.ql-editor').fill('Deskripsi section yang bisa diubah.');await page.locator('[data-rich-text]').nth(0).locator('.ql-editor').press('ControlOrMeta+A');await page.locator('[data-rich-text]').nth(0).getByRole('button',{name:'Tebal',exact:true}).click();
+  await page.locator('[data-rich-text]').nth(1).locator('.ql-editor').fill('Keterangan tambahan section.');
+  check('Body and detail editors are available',await page.locator('[data-rich-text][data-editor-ready="true"]').count()===2);
+  await page.locator('[name="settings[eyebrow]"]').fill('QC INTRO');await page.locator('[name="settings[button_label]"]').fill('QC Buka Layanan');await page.locator('[name="settings[button_target]"]').selectOption('service:'+fixtures.serviceId);
+  check('Selecting a related service hides manual URL',!await page.locator('[name="settings[button_url]"]').isVisible());
+  await page.locator('[name="media_id"]').selectOption(String(fixtures.desktop));await page.locator('[name="mobile_media_id"]').selectOption(String(fixtures.mobile));await page.locator('[name="settings[theme]"]').selectOption('light');await page.locator('[name="settings[spacing]"]').selectOption('compact');
+  await page.getByRole('button',{name:'Tambah item',exact:true}).click();let rows=page.locator('[data-section-items] [data-section-item]');await rows.nth(0).locator('[data-editor-ready="true"]').waitFor();await rows.nth(0).locator('input').first().fill('QC Item First');await rows.nth(0).locator('.ql-editor').fill('Isi item pertama.');
+  check('New items get a local WYSIWYG editor',await rows.nth(0).locator('.ql-toolbar').count()===1);
+  await page.getByRole('button',{name:'Tambah item',exact:true}).click();await rows.nth(1).locator('[data-editor-ready="true"]').waitFor();await rows.nth(1).locator('input').first().fill('QC Item Second');await rows.nth(1).locator('.ql-editor').fill('Isi item kedua.');
+  await rows.nth(1).getByRole('button',{name:'Naikkan item',exact:true}).click();check('Item reorder updates field indices',await rows.nth(0).locator('input').first().inputValue()==='QC Item Second');await rows.nth(1).getByRole('button',{name:'Hapus item',exact:true}).click();check('Item removal works',await rows.count()===1);
+  await save();check('Rich body saved with formatting',await page.locator('textarea[name="body"]').inputValue().then(value=>value.includes('<strong>')));check('Item persists after save',await page.locator('[data-section-items] [data-section-item]').count()===1);
+  await page.screenshot({path:output+'/section-editor-desktop.png',fullPage:true});
+  await go('/');const section=page.locator('#qc-custom-section');check('Custom section heading renders',await section.locator('h2').innerText()==='QC Section Public Heading');check('Rich description renders',await section.locator('strong').first().innerText()==='Deskripsi section yang bisa diubah.');check('Related button opens service route',await section.getByRole('link',{name:'QC Buka Layanan',exact:true}).getAttribute('href').then(href=>href.includes('/layanan/')));check('Custom items render',await section.getByRole('heading',{name:'QC Item Second',exact:true}).count()===1);
+  const image=section.locator('picture img');await image.scrollIntoViewIfNeeded();await image.evaluate(image=>image.decode());check('Desktop media selected',await image.evaluate(image=>image.currentSrc.includes('qc-section-desktop.webp')));check('Section images use lazy loading',await image.getAttribute('loading')==='lazy');await section.screenshot({path:output+'/section-public-desktop.png'});
+  await page.setViewportSize({width:390,height:844});await go('/');const mobileSection=page.locator('#qc-custom-section');await mobileSection.locator('picture img').scrollIntoViewIfNeeded();await mobileSection.locator('picture img').evaluate(image=>image.decode());check('Mobile media selected',await mobileSection.locator('picture img').evaluate(image=>image.currentSrc.includes('qc-section-mobile.webp')));check('Public custom section has no mobile overflow',await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));await mobileSection.screenshot({path:output+'/section-public-mobile.png'});
+  await go(editPath);await ready();check('Editor has no mobile overflow',await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));await page.screenshot({path:output+'/section-editor-mobile.png',fullPage:true});
+  await page.locator('[name="starts_at"]').fill('2099-01-01T09:00');await save();await go('/');check('Future scheduled section is hidden',await page.locator('#qc-custom-section').count()===0);
+  await go(editPath);await ready();await page.locator('[name="starts_at"]').fill('');await page.locator('[name="location"]').selectOption('bottom');await save();await go('/berita');check('Global placement shows section on inner pages',await page.locator('#qc-custom-section').count()===1);
+  await go(editPath);await ready();await page.locator('[name="is_visible"]').uncheck();await save();await go('/berita');check('Hidden section disappears on all pages',await page.locator('#qc-custom-section').count()===0);
+  check('Public page does not load section editor scripts',await page.evaluate(()=>performance.getEntriesByType('resource').every(entry=>!entry.name.includes('admin-sections')&&!entry.name.includes('admin-editor'))));
+ }catch(error){result.errors.push(error.message);await page.screenshot({path:output+'/section-failure.png',fullPage:true});}
+ fs.writeFileSync(output+'/sections-results.json',JSON.stringify(result,null,2));console.log(JSON.stringify(result,null,2));await browser.close();if(result.errors.length||result.failedRequests.length)process.exitCode=1;
+})().catch(error=>{console.error(error);process.exit(1);});

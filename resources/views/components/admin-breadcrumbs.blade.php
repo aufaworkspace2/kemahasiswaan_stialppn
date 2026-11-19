@@ -1,0 +1,2 @@
+@props(['items'=>[],'title'=>'Dashboard'])
+<nav class="admin-breadcrumbs" aria-label="Breadcrumb"><ol><li>@if($title==='Dashboard')<span aria-current="page">Dashboard</span>@else<a href="{{ route('admin.dashboard') }}">Dashboard</a>@endif</li>@foreach($items as $item)<li><span aria-hidden="true">/</span><a href="{{ $item['url'] }}">{{ $item['label'] }}</a></li>@endforeach @if($title!=='Dashboard')<li><span aria-hidden="true">/</span><span aria-current="page">{{ $title }}</span></li>@endif</ol></nav>
